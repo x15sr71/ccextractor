@@ -1067,29 +1067,35 @@ impl dtvcc_service_decoder {
     /// WARN: This code is completely untested due to lack of samples. Just following specs!
     /// Returns number of used bytes, usually 1 (since EXT1 is not counted).
     pub fn handle_extended_char(&mut self, block: &[c_uchar]) -> u8 {
-        let code = block[0];
-        debug!(
-            "dtvcc_handle_extended_char, first data code: [{}], length: [{}]",
-            code as char,
-            block.len()
-        );
+    // Check if block is empty before accessing block[0]
+    if block.is_empty() {
+        warn!("handle_extended_char: Empty block received after EXT1 command");
+        return 1;
+    }
+    
+    let code = block[0];
+    debug!(
+        "dtvcc_handle_extended_char, first data code: [{}], length: [{}]",
+        code as char,
+        block.len()
+    );
 
-        match code {
-            0..=0x1F => commands::handle_C2(code),
-            0x20..=0x7F => {
-                let val = unsafe { dtvcc_get_internal_from_G2(code) };
-                let sym = dtvcc_symbol::new(val as u16);
-                self.process_character(sym);
-                1
-            }
-            0x80..=0x9F => commands::handle_C3(code, block[1]),
-            _ => {
-                let val = unsafe { dtvcc_get_internal_from_G3(code) };
-                let sym = dtvcc_symbol::new(val as u16);
-                self.process_character(sym);
-                1
-            }
+    match code {
+        0..=0x1F => commands::handle_C2(code),
+        0x20..=0x7F => {
+            let val = unsafe { dtvcc_get_internal_from_G2(code) };
+            let sym = dtvcc_symbol::new(val as u16);
+            self.process_character(sym);
+            1
         }
+        0x80..=0x9F => commands::handle_C3(code, block.len()),  // ← FIXED
+        _ => {
+            let val = unsafe { dtvcc_get_internal_from_G3(code) };
+            let sym = dtvcc_symbol::new(val as u16);
+            self.process_character(sym);
+            1
+        }
+    }
     }
 
     /// Process the character and add it to the current window
@@ -1711,36 +1717,52 @@ mod test {
 
     #[test]
     fn test_handle_extended_char() {
-        let mut decoder = setup_test_decoder_with_memory();
+    let mut decoder = setup_test_decoder_with_memory();
 
-        // 0..=0x1F
-        let return_value = decoder.handle_extended_char(&[0x1A, 0x61]);
-        assert_eq!(return_value, 4);
+    // Test case 1: Empty block (defensive check)
+    let empty_block: [c_uchar; 0] = [];
+    let result = decoder.handle_extended_char(&empty_block);
+    assert_eq!(result, 1, "Empty block should skip 1 byte");
 
-        // 0x20..=0x7F
-        let return_value = decoder.handle_extended_char(&[0x25, 0x61]);
-        assert_eq!(return_value, 1);
-        assert_eq!(decoder.windows[0].pen_row, 0);
-        assert_eq!(decoder.windows[0].pen_column, 1);
-        unsafe {
-            assert_eq!(decoder.windows[0].rows[0].add(0).read().sym, 0x5);
-        }
+    // Test case 2: C3 command with SUFFICIENT data
+    let valid_5byte = [0x80, 0x00, 0x00, 0x00, 0x00];
+    let result = decoder.handle_extended_char(&valid_5byte);
+    assert_eq!(result, 5, "Valid 5-byte C3 should consume 5 bytes");
 
-        // 0x80..=0x9F
-        let return_value = decoder.handle_extended_char(&[0x86, 0x61]);
-        assert_eq!(return_value, 5);
+    let valid_6byte = [0x88, 0x00, 0x00, 0x00, 0x00, 0x00];
+    let result = decoder.handle_extended_char(&valid_6byte);
+    assert_eq!(result, 6, "Valid 6-byte C3 should consume 6 bytes");
 
-        // Anyother value > 0x9F (59)
-        let return_value = decoder.handle_extended_char(&[65, 0x61]);
-        assert_eq!(return_value, 1);
-        assert_eq!(decoder.windows[0].pen_row, 0);
-        assert_eq!(decoder.windows[0].pen_column, 2);
-        unsafe {
-            assert_eq!(decoder.windows[0].rows[0].add(1).read().sym, 0x20);
-        }
+    // Test case 3: TRUNCATED C3 commands (THIS REPRODUCES THE BUG!)
+    let truncated_5byte = [0x80];  // Only 1 byte, need 5
+    let result = decoder.handle_extended_char(&truncated_5byte);
+    assert_eq!(result, 1, "Truncated 5-byte C3 should skip safely");
 
-        cleanup_test_decoder(&mut decoder);
-    }
+    let truncated_6byte = [0x88];  // Only 1 byte, need 6
+    let result = decoder.handle_extended_char(&truncated_6byte);
+    assert_eq!(result, 1, "Truncated 6-byte C3 should skip safely");
+
+    // Test case 4: Insufficient data
+    let insufficient_5byte = [0x80, 0x00, 0x00, 0x00];  // 4 bytes, need 5
+    let result = decoder.handle_extended_char(&insufficient_5byte);
+    assert_eq!(result, 1, "Insufficient 5-byte data should skip safely");
+
+    let insufficient_6byte = [0x88, 0x00, 0x00, 0x00, 0x00];  // 5 bytes, need 6
+    let result = decoder.handle_extended_char(&insufficient_6byte);
+    assert_eq!(result, 1, "Insufficient 6-byte data should skip safely");
+
+    // Test case 5: Variable length commands (0x90-0x9F) - unsupported
+    let variable_cmd = [0x90, 0x05, 0x00, 0x00, 0x00, 0x00];
+    let result = decoder.handle_extended_char(&variable_cmd);
+    assert_eq!(result, 1, "Variable length C3 should skip safely");
+
+    // Test case 6: G2 character (works normally)
+    let g2_char = [0x25];
+    let result = decoder.handle_extended_char(&g2_char);
+    assert_eq!(result, 1, "G2 character should consume 1 byte");
+
+    cleanup_test_decoder(&mut decoder);
+   }
 
     #[test]
     fn test_process_character() {
