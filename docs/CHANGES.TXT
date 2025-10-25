@@ -1,5 +1,6 @@
 1.0 (to be released)
 -----------------
+- Fix: Prevent panic on truncated CEA-708 C3 extended commands by adding bounds checks, updating handle_C3 logic, and updating tests
 - Fix: ARM64/aarch64 build failure due to c_char type mismatch in nal.rs
 - Fix: HardSubX OCR on Rust
 - Removed the Share Module

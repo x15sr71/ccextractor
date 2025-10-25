@@ -168,21 +168,30 @@ pub fn handle_C2(code: u8) -> u8 {
 }
 
 /// Handle C3 - Code Set - Extended Control Code Set 2
-pub fn handle_C3(code: u8, next_code: u8) -> u8 {
-    match code {
-        // Five-byte control bytes (4 additional bytes)
+pub fn handle_C3(code: u8, available_length: usize) -> u8 {
+    let required_bytes: u8 = match code {
+        // Five-byte control codes (4 additional bytes)
         0x80..=0x87 => 5,
-        // Six-byte control codes (5 additional byte)
+        // Six-byte control codes (5 additional bytes)
         0x88..=0x8F => 6,
-        // 90-9F variable length commands
-        // Refer Section 7.1.11.2
-        _ => {
-            // next code is the header which specifies additional bytes
-            let length = (next_code & 0x3F) + 1;
-            // + 1 for current code
-            length + 1
+        // Variable length commands (0x90-0x9F) are unsupported
+        // Return 1 to skip safely
+        0x90..=0x9F => {
+            return 1;
         }
+        // Should not reach here if called correctly, but handle gracefully
+        _ => {
+            return 1;
+        }
+    };
+
+    // Validate we have enough bytes available
+    if available_length < required_bytes as usize {
+        // Insufficient data - return 1 to skip safely
+        return 1;
     }
+
+    required_bytes
 }
 
 #[cfg(test)]
@@ -209,16 +218,25 @@ mod test {
 
     #[test]
     fn test_handle_C3() {
-        // Case 1: Five-byte control bytes
-        assert_eq!(handle_C3(128, 1), 5);
-        assert_eq!(handle_C3(135, 1), 5);
+        // Case 1: Five-byte control codes with SUFFICIENT data
+        assert_eq!(handle_C3(0x80, 5), 5, "5-byte command with exact length");
+        assert_eq!(handle_C3(0x87, 5), 5, "5-byte command boundary");
+        assert_eq!(handle_C3(0x80, 10), 5, "5-byte command with extra data");
 
-        // Case 2: Six-byte control codes
-        assert_eq!(handle_C3(136, 1), 6);
-        assert_eq!(handle_C3(143, 1), 6);
+        // Case 2: Six-byte control codes with SUFFICIENT data
+        assert_eq!(handle_C3(0x88, 6), 6, "6-byte command with exact length");
+        assert_eq!(handle_C3(0x8F, 6), 6, "6-byte command boundary");
+        assert_eq!(handle_C3(0x88, 10), 6, "6-byte command with extra data");
 
-        // Case 3: variable length commands
-        assert_eq!(handle_C3(149, 4), 6);
-        assert_eq!(handle_C3(155, 9), 11);
+        // Case 3: TRUNCATED commands (THIS IS THE BUG FIX!)
+        assert_eq!(handle_C3(0x80, 1), 1, "Truncated: only 1 byte, need 5");
+        assert_eq!(handle_C3(0x80, 4), 1, "Truncated: only 4 bytes, need 5");
+        assert_eq!(handle_C3(0x88, 1), 1, "Truncated: only 1 byte, need 6");
+        assert_eq!(handle_C3(0x88, 5), 1, "Truncated: only 5 bytes, need 6");
+
+        // Case 4: Variable length commands (0x90-0x9F) are UNSUPPORTED
+        assert_eq!(handle_C3(0x90, 10), 1, "Variable length: unsupported");
+        assert_eq!(handle_C3(0x9F, 10), 1, "Variable length: unsupported");
+        assert_eq!(handle_C3(0x95, 2), 1, "Variable length: unsupported");
     }
 }
