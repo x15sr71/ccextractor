@@ -80,6 +80,11 @@ pub unsafe fn copy_from_rust(ccx_s_options: *mut ccx_s_options, options: Options
     (*ccx_s_options).extraction_start = options.extraction_start.to_ctype();
     (*ccx_s_options).extraction_end = options.extraction_end.to_ctype();
     (*ccx_s_options).print_file_reports = options.print_file_reports as _;
+    // Report output format (e.g. "json")
+    if let Some(ref fmt) = options.report_format {
+        (*ccx_s_options).report_format =
+        replace_rust_c_string((*ccx_s_options).report_format, fmt.as_str());
+    }
     // Preserve the original C-managed report pointer to avoid dangling pointer issues.
     let saved_608_report = (*ccx_s_options).settings_608.report;
     (*ccx_s_options).settings_608 = options.settings_608.to_ctype();
@@ -299,56 +304,67 @@ pub unsafe fn copy_from_rust(ccx_s_options: *mut ccx_s_options, options: Options
 /// This function is unsafe because we are dereferencing the pointer passed to it.
 #[allow(clippy::unnecessary_cast)]
 pub unsafe fn copy_to_rust(ccx_s_options: *const ccx_s_options) -> Options {
-    let mut options = Options {
-        extract: (*ccx_s_options).extract as u8,
-        no_rollup: (*ccx_s_options).no_rollup != 0,
-        noscte20: (*ccx_s_options).noscte20 != 0,
-        webvtt_create_css: (*ccx_s_options).webvtt_create_css != 0,
-        cc_channel: (*ccx_s_options).cc_channel as u8,
-        buffer_input: (*ccx_s_options).buffer_input != 0,
-        nofontcolor: (*ccx_s_options).nofontcolor != 0,
-        nohtmlescape: (*ccx_s_options).nohtmlescape != 0,
-        notypesetting: (*ccx_s_options).notypesetting != 0,
-        // Handle extraction_start and extraction_end
-        extraction_start: Some(
-            Timestamp::from_hms_millis(
-                (*ccx_s_options).extraction_start.hh as u8,
-                (*ccx_s_options).extraction_start.mm as u8,
-                (*ccx_s_options).extraction_start.ss as u8,
-                0,
-            )
-            .expect("Invalid extraction start time"),
-        ),
-        extraction_end: Some(
-            Timestamp::from_hms_millis(
-                (*ccx_s_options).extraction_end.hh as u8,
-                (*ccx_s_options).extraction_end.mm as u8,
-                (*ccx_s_options).extraction_end.ss as u8,
-                0,
-            )
-            .expect("Invalid extraction end time"),
-        ),
-        print_file_reports: (*ccx_s_options).print_file_reports != 0,
-        // Handle settings_608 and settings_dtvcc - assuming FromCType trait is implemented for these
-        settings_608: Decoder608Settings::from_ctype((*ccx_s_options).settings_608)
-            .unwrap_or(Decoder608Settings::default()),
-        settings_dtvcc: DecoderDtvccSettings::from_ctype((*ccx_s_options).settings_dtvcc)
-            .unwrap_or(DecoderDtvccSettings::default()),
-        is_608_enabled: (*ccx_s_options).is_608_enabled != 0,
-        is_708_enabled: (*ccx_s_options).is_708_enabled != 0,
-        // Assuming a millis_separator conversion function exists or we can use chars directly
-        binary_concat: (*ccx_s_options).binary_concat != 0,
-        // Handle use_gop_as_pts special case
-        use_gop_as_pts: match (*ccx_s_options).use_gop_as_pts {
-            1 => Some(true),
-            -1 => Some(false),
-            _ => None,
-        },
-        fix_padding: (*ccx_s_options).fix_padding != 0,
-        gui_mode_reports: (*ccx_s_options).gui_mode_reports != 0,
-        no_progress_bar: (*ccx_s_options).no_progress_bar != 0,
-        ..Default::default()
-    };
+let mut options = Options {
+    extract: (*ccx_s_options).extract as u8,
+    no_rollup: (*ccx_s_options).no_rollup != 0,
+    noscte20: (*ccx_s_options).noscte20 != 0,
+    webvtt_create_css: (*ccx_s_options).webvtt_create_css != 0,
+    cc_channel: (*ccx_s_options).cc_channel as u8,
+    buffer_input: (*ccx_s_options).buffer_input != 0,
+    nofontcolor: (*ccx_s_options).nofontcolor != 0,
+    nohtmlescape: (*ccx_s_options).nohtmlescape != 0,
+    notypesetting: (*ccx_s_options).notypesetting != 0,
+
+    extraction_start: Some(
+        Timestamp::from_hms_millis(
+            (*ccx_s_options).extraction_start.hh as u8,
+            (*ccx_s_options).extraction_start.mm as u8,
+            (*ccx_s_options).extraction_start.ss as u8,
+            0,
+        ).expect("Invalid extraction start time"),
+    ),
+    extraction_end: Some(
+        Timestamp::from_hms_millis(
+            (*ccx_s_options).extraction_end.hh as u8,
+            (*ccx_s_options).extraction_end.mm as u8,
+            (*ccx_s_options).extraction_end.ss as u8,
+            0,
+        ).expect("Invalid extraction end time"),
+    ),
+
+    print_file_reports: (*ccx_s_options).print_file_reports != 0,
+
+    // ✅ IMPORTANT: no logic here
+    report_format: None,
+
+    settings_608: Decoder608Settings::from_ctype((*ccx_s_options).settings_608)
+        .unwrap_or_default(),
+    settings_dtvcc: DecoderDtvccSettings::from_ctype((*ccx_s_options).settings_dtvcc)
+        .unwrap_or_default(),
+
+    is_608_enabled: (*ccx_s_options).is_608_enabled != 0,
+    is_708_enabled: (*ccx_s_options).is_708_enabled != 0,
+
+    binary_concat: (*ccx_s_options).binary_concat != 0,
+
+    use_gop_as_pts: match (*ccx_s_options).use_gop_as_pts {
+        1 => Some(true),
+        -1 => Some(false),
+        _ => None,
+    },
+
+    fix_padding: (*ccx_s_options).fix_padding != 0,
+    gui_mode_reports: (*ccx_s_options).gui_mode_reports != 0,
+    no_progress_bar: (*ccx_s_options).no_progress_bar != 0,
+
+    ..Default::default()
+};
+
+    if !(*ccx_s_options).report_format.is_null() {
+    options.report_format =
+        Some(c_char_to_string((*ccx_s_options).report_format));
+    }
+
 
     // Handle sentence_cap_file (C string to PathBuf)
     if !(*ccx_s_options).sentence_cap_file.is_null() {
