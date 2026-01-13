@@ -311,6 +311,7 @@ impl OptionsExt for Options {
             InFormat::Mp4 => self.demux_cfg.auto_stream = StreamMode::Mp4,
             InFormat::Mkv => self.demux_cfg.auto_stream = StreamMode::Mkv,
             InFormat::Mxf => self.demux_cfg.auto_stream = StreamMode::Mxf,
+            InFormat::Scc => self.demux_cfg.auto_stream = StreamMode::Scc,
         }
     }
 
@@ -790,6 +791,14 @@ impl OptionsExt for Options {
             self.psm = *psm as _;
         }
 
+        if args.ocr_line_split {
+            self.ocr_line_split = true;
+        }
+
+        if args.no_ocr_blacklist {
+            self.ocr_blacklist = false;
+        }
+
         if let Some(ref lang) = args.mkvlang {
             self.mkvlang = Some(Language::from_str(lang.as_str()).unwrap());
             let str = lang.as_str();
@@ -881,6 +890,11 @@ impl OptionsExt for Options {
                     0
                 }
             };
+        }
+
+        // Handle SCC accurate timing option (issue #1120)
+        if args.scc_accurate_timing {
+            self.scc_accurate_timing = true;
         }
 
         if args.no_scte20 {
