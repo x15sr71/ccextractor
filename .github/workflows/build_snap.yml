@@ -35,13 +35,28 @@ jobs:
       - name: Set Snap version from tag
         if: github.event_name == 'release'
         run: |
-          VERSION="${GITHUB_REF/refs\/tags\/v/}"
+          # Extract version from GITHUB_REF (handles both v0.96.6 and 0.96.6 tags)
+          VERSION="${GITHUB_REF#refs/tags/}"
+          VERSION="${VERSION#v}"
           VERSION="${VERSION%%-*}"
-          # Enforce reasonable length
+          VERSION="${VERSION//[[:space:]]/}"
+
+          if [ -z "$VERSION" ]; then
+            echo "ERROR: Version is empty after parsing GITHUB_REF: $GITHUB_REF" >&2
+            exit 1
+          fi
+
           if [ ${#VERSION} -gt 32 ]; then
             echo "Snap version too long: $VERSION" >&2
             exit 1
           fi
+
+          # Verify snapcraft.yaml has a version line before modifying
+          if ! grep -q '^version:' snap/snapcraft.yaml; then
+            echo "ERROR: No version line found in snap/snapcraft.yaml" >&2
+            exit 1
+          fi
+
           echo "Setting snap version to: $VERSION"
           sed -i "s/^version: .*/version: '${VERSION}'/" snap/snapcraft.yaml
           grep -m1 '^version:' snap/snapcraft.yaml
