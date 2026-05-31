@@ -32,6 +32,20 @@ jobs:
       - name: Show Snapcraft version
         run: snapcraft --version
 
+      - name: Set Snap version from tag
+        if: github.event_name == 'release'
+        run: |
+          VERSION="${GITHUB_REF/refs\/tags\/v/}"
+          VERSION="${VERSION%%-*}"
+          # Enforce reasonable length
+          if [ ${#VERSION} -gt 32 ]; then
+            echo "Snap version too long: $VERSION" >&2
+            exit 1
+          fi
+          echo "Setting snap version to: $VERSION"
+          sed -i "s/^version: .*/version: '${VERSION}'/" snap/snapcraft.yaml
+          grep -m1 '^version:' snap/snapcraft.yaml
+
       - name: Build snap
         run: sudo snapcraft --destructive-mode
 
