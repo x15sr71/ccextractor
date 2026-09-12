@@ -175,6 +175,15 @@ if (NETWORKING_DEBUG)
 endif (NETWORKING_DEBUG)
 add_subdirectory (lib_ccx)
 
+# ccx is a STATIC library, so CMake also records its PRIVATE link libraries in
+# INTERFACE_LINK_LIBRARIES as $<LINK_ONLY:...> and propagates them to consumers.
+# That pins the FFmpeg shared libs BEFORE rust/libccx_rust.a on the ccextractor
+# link line; GNU ld resolves left to right, so the FFmpeg symbols rsmpeg (inside
+# libccx_rust.a) needs are already discarded by the time it is processed. This
+# file lists every dependency of ccextractor explicitly below and owns the link
+# order (see EXTRA_FFMPEG_LIBS), so drop the propagated set.
+set_property (TARGET ccx PROPERTY INTERFACE_LINK_LIBRARIES "")
+
 aux_source_directory(${PROJECT_SOURCE_DIR} SOURCEFILE)
 set (EXTRA_LIBS ${EXTRA_LIBS} ccx)
 set (EXTRA_LIBS ${EXTRA_LIBS} ${GPAC_LIBRARIES})
@@ -271,11 +280,6 @@ if (PKG_CONFIG_FOUND AND WITH_HARDSUBX)
 
   set (EXTRA_INCLUDES ${EXTRA_INCLUDES} ${TESSERACT_INCLUDE_DIRS})
   set (EXTRA_INCLUDES ${EXTRA_INCLUDES} ${LEPTONICA_INCLUDE_DIRS})
-
-  # Collect FFmpeg libs for placement after ccx_rust (same reason as WITH_FFMPEG)
-  set (EXTRA_FFMPEG_LIBS ${EXTRA_FFMPEG_LIBS} ${AVFORMAT_LIBRARIES}
-       ${AVUTIL_LIBRARIES} ${AVCODEC_LIBRARIES} ${AVFILTER_LIBRARIES}
-       ${SWSCALE_LIBRARIES})
 endif (PKG_CONFIG_FOUND AND WITH_HARDSUBX)
 
 add_executable (ccextractor ${SOURCEFILE} ${FREETYPE_SOURCE} ${UTF8PROC_SOURCE})
