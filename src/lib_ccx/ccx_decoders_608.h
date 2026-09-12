@@ -49,6 +49,7 @@ typedef struct ccx_decoder_608_context
 	int my_channel;			// Used for sanity checks
 	int rollup_from_popon;		// Track transition from pop-on/paint-on to roll-up mode
 	LLONG ts_first_char_rollup_transition; // FTS of first char after pop-on -> roll-up (EOF fallback when no scrolling CR fires). -1 if unset.
+	int flushing_at_eof;		       // Set only while flush_608_context() drains the decoder at end of stream.
 	int64_t bytes_processed_608;	// To be written ONLY by process_608
 	int have_cursor_position;
 

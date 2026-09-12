@@ -151,6 +151,7 @@ ccx_decoder_608_context *ccx_decoder_608_init_library(struct ccx_decoder_608_set
 	data->have_cursor_position = 0;
 	data->rollup_from_popon = 0;
 	data->ts_first_char_rollup_transition = -1;
+	data->flushing_at_eof = 0;
 	data->output_format = output_format;
 	data->cc_to_stdout = cc_to_stdout;
 	data->textprinted = 0;
@@ -322,7 +323,8 @@ int write_cc_buffer(ccx_decoder_608_context *context, struct cc_subtitle *sub)
 	// with fewer lines than the roll-up window). The CR handler never ran,
 	// so back-fill current_visible_start_ms from the first-char FTS instead
 	// of emitting a caption starting at 0.
-	if (context->rollup_from_popon && context->ts_first_char_rollup_transition > 0)
+	if (context->flushing_at_eof && context->rollup_from_popon &&
+	    context->ts_first_char_rollup_transition > 0)
 	{
 		context->current_visible_start_ms = context->ts_first_char_rollup_transition;
 		context->rollup_from_popon = 0;
@@ -929,7 +931,9 @@ void flush_608_context(ccx_decoder_608_context *context, struct cc_subtitle *sub
 {
 	// We issue a EraseDisplayedMemory here so if there's any captions pending
 	// they get written to Subtitle.
+	context->flushing_at_eof = 1;
 	handle_command(0x14, 0x2c, context, sub); // EDM
+	context->flushing_at_eof = 0;
 }
 
 // CEA-608, Anex F 1.1.1. - Character Set Table / Special Characters
