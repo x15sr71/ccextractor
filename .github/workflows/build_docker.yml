@@ -11,6 +11,7 @@ on:
     - '**CMakeLists.txt'
     - '**.cmake'
     - 'src/rust/**'
+    - 'rust-toolchain.toml'
   pull_request:
     types: [opened, synchronize, reopened]
     paths:
@@ -21,6 +22,7 @@ on:
     - '**CMakeLists.txt'
     - '**.cmake'
     - 'src/rust/**'
+    - 'rust-toolchain.toml'
 
 jobs:
   build_minimal:
