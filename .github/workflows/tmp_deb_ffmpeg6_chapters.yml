@@ -1,0 +1,45 @@
+# TEMP: repro for FFmpeg-7 rsmpeg bindings running against Ubuntu 24.04's FFmpeg 6.1
+# (the build_deb.yml hardsubx configuration). Not for upstream.
+name: TMP deb FFmpeg6 chapters repro
+on:
+  push:
+    branches: [test/deb-ffmpeg6-chapters]
+  workflow_dispatch:
+jobs:
+  repro:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v7
+      - name: Deps (same as build_deb.yml hardsubx, distro GPAC, ffmpeg CLI for test media)
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends build-essential cmake pkg-config \
+            zlib1g-dev libpng-dev libjpeg-dev libfreetype-dev libxml2-dev libcurl4-gnutls-dev \
+            libssl-dev clang libclang-dev tesseract-ocr libtesseract-dev libleptonica-dev \
+            libavcodec-dev libavformat-dev libavutil-dev libswscale-dev libswresample-dev \
+            libavfilter-dev libavdevice-dev libgpac-dev ffmpeg
+          pkg-config --modversion libavformat
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Build hardsubx (FFmpeg demuxer) and default (GPAC demuxer) binaries
+        run: |
+          cmake -S src -B b-ffmpeg -DCMAKE_BUILD_TYPE=Release -DWITH_OCR=ON -DWITH_HARDSUBX=ON
+          cmake --build b-ffmpeg -j$(nproc)
+          cmake -S src -B b-gpac -DCMAKE_BUILD_TYPE=Release
+          cmake --build b-gpac -j$(nproc)
+      - name: Make test MP4s
+        run: |
+          printf ';FFMETADATA1\n[CHAPTER]\nTIMEBASE=1/1000\nSTART=0\nEND=4000\ntitle=One\n[CHAPTER]\nTIMEBASE=1/1000\nSTART=4000\nEND=10000\ntitle=Two\n' > meta.txt
+          ffmpeg -loglevel error -f lavfi -i testsrc=d=10:s=320x240 -i meta.txt -map 0 -map_chapters 1 -c:v libx264 -pix_fmt yuv420p with_ch.mp4 \
+            || ffmpeg -loglevel error -f lavfi -i testsrc=d=10:s=320x240 -i meta.txt -map 0 -map_chapters 1 -c:v mpeg4 with_ch.mp4
+          ffmpeg -loglevel error -f lavfi -i testsrc=d=10:s=320x240 -c:v mpeg4 no_ch.mp4
+          ffprobe -v error -show_chapters -of compact with_ch.mp4
+      - name: Run --chapters
+        run: |
+          for bin in b-ffmpeg b-gpac; do for f in with_ch no_ch; do
+            rm -f $f.mp4.txt
+            echo "::group::$bin $f"
+            rc=0; ./$bin/ccextractor --chapters $f.mp4 > $bin-$f.log 2>&1 || rc=$?
+            tail -5 $bin-$f.log; echo "exit=$rc"; if [ -f $f.mp4.txt ]; then cat $f.mp4.txt; fi
+            echo "::endgroup::"
+            echo "RESULT $bin $f exit=$rc"
+          done; done
