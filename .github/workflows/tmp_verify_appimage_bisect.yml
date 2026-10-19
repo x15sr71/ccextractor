@@ -1,0 +1,130 @@
+# TEMP: verify the AppImage hardsubx bisect and that the src/CMakeLists.txt hunk is required. Not for upstream.
+name: TMP verify AppImage hardsubx bisect
+on:
+  push:
+    branches: [test/verify-appimage-bisect]
+  workflow_dispatch:
+
+jobs:
+  # Replays master's pre-PR hardsubx job (distro FFmpeg 4.4, bare GPAC ./configure, no caches)
+  # on historical commits. build_appimage.sh is unchanged since 600cc5f9; the workflow only
+  # bumped action versions.
+  bisect:
+    name: bisect ${{ matrix.label }}
+    runs-on: ubuntu-22.04
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { label: "600cc5f9 (last green)", sha: 600cc5f96da997fcf8a381a0ed0751db40db3e23 }
+          - { label: "c8932dab (parent of #2191)", sha: c8932dabf7964658cdcf8e546c746fc7d6e0f699 }
+          - { label: "e4443a74 (#2191)", sha: e4443a74ba70c973c119f0b1c514d75a919bdc63 }
+          - { label: "283bfd98 (#2269)", sha: 283bfd98968ef27a5484d30e5d55dbe6af87bc27 }
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ matrix.sha }}
+      - name: Show checkout
+        run: |
+          git log -1 --format='%H %cs %s'
+          grep -A2 '^name = "rsmpeg"' src/rust/Cargo.lock | grep source
+          grep -rl 'rsmpeg::avformat' src/rust/src || echo "no rsmpeg::avformat use"
+      - name: Install base dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends build-essential cmake pkg-config wget file \
+            libfuse2 zlib1g-dev libpng-dev libjpeg-dev libfreetype-dev libxml2-dev libcurl4-gnutls-dev \
+            libssl-dev clang libclang-dev
+      - name: Install OCR dependencies
+        run: sudo apt-get install -y --no-install-recommends tesseract-ocr libtesseract-dev libleptonica-dev tesseract-ocr-eng
+      - name: Install FFmpeg dependencies (HardSubX)
+        run: |
+          sudo apt-get install -y --no-install-recommends libavcodec-dev libavformat-dev libavutil-dev \
+            libswscale-dev libswresample-dev libavfilter-dev libavdevice-dev
+          pkg-config --modversion libavutil libavformat
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Build and install GPAC
+        run: |
+          git clone -b v2.4.0 --depth 1 https://github.com/gpac/gpac
+          cd gpac
+          ./configure
+          make -j$(nproc) lib
+          sudo make install-lib
+          sudo ldconfig
+      - name: Build AppImage (hardsubx)
+        run: |
+          set +e
+          cd linux && chmod +x build_appimage.sh
+          BUILD_TYPE=hardsubx ./build_appimage.sh > ../build.log 2>&1
+          rc=$?
+          cd ..
+          tail -40 build.log
+          n=$(grep -c 'undefined reference to' build.log)
+          r=$(grep 'undefined reference to' build.log | grep -c rsmpeg)
+          u=$(grep -oE "undefined reference to .[a-z0-9_]+" build.log | sort -u | wc -l)
+          echo "RESULT ${{ matrix.label }}: build_rc=$rc undefined_refs=$n from_rsmpeg=$r distinct_symbols=$u"
+          if [ $rc -eq 0 ]; then ./linux/ccextractor-hardsubx-x86_64.AppImage --version | head -3; fi
+          exit $rc
+
+  # This PR's hardsubx job as-is, and with its src/CMakeLists.txt hunk reverted.
+  control:
+    name: PR ${{ matrix.variant }}
+    runs-on: ubuntu-22.04
+    strategy:
+      fail-fast: false
+      matrix:
+        variant: [as-is, without-link_directories]
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: 27e9295e57d507ee46f9476b2f63d8ac130355e2
+          fetch-depth: 2
+      - name: Revert the src/CMakeLists.txt hunk
+        if: matrix.variant == 'without-link_directories'
+        run: |
+          git diff HEAD~1 HEAD -- src/CMakeLists.txt | git apply -R
+          git diff
+      - name: Install base dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends build-essential cmake pkg-config wget file \
+            libfuse2 zlib1g-dev libpng-dev libjpeg-dev libfreetype-dev libxml2-dev libcurl4-gnutls-dev \
+            libssl-dev clang libclang-dev
+      - name: Install OCR dependencies
+        run: sudo apt-get install -y --no-install-recommends tesseract-ocr libtesseract-dev libleptonica-dev tesseract-ocr-eng
+      - name: Build and install FFmpeg 7
+        run: |
+          sudo apt-get install -y --no-install-recommends nasm yasm
+          git clone -b n7.1 --depth 1 https://github.com/FFmpeg/FFmpeg.git ffmpeg-src
+          cd ffmpeg-src
+          ./configure --prefix=/opt/ffmpeg7 --enable-shared --disable-static --disable-programs --disable-doc
+          make -j$(nproc)
+          sudo make install
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Build and install GPAC
+        run: |
+          git clone -b v2.4.0 --depth 1 https://github.com/gpac/gpac
+          cd gpac
+          ./configure --disable-ffmpeg
+          make -j$(nproc) lib
+          sudo make install-lib
+          sudo ldconfig
+      - name: Use vendored FFmpeg 7
+        run: |
+          echo "PKG_CONFIG_PATH=/opt/ffmpeg7/lib/pkgconfig" >> $GITHUB_ENV
+          echo "LD_LIBRARY_PATH=/opt/ffmpeg7/lib" >> $GITHUB_ENV
+          sudo ldconfig /opt/ffmpeg7/lib
+          echo "system FFmpeg libs present?"; ls /usr/lib/x86_64-linux-gnu/ | grep -E '^lib(avformat|avcodec|avutil)\.so' || echo "none"
+      - name: Build AppImage (hardsubx)
+        run: |
+          set +e
+          cd linux && chmod +x build_appimage.sh
+          BUILD_TYPE=hardsubx ./build_appimage.sh > ../build.log 2>&1
+          rc=$?
+          cd ..
+          tail -40 build.log
+          n=$(grep -c 'undefined reference to' build.log)
+          m=$(grep -cE 'cannot find -l(av|sw)' build.log)
+          echo "RESULT PR ${{ matrix.variant }}: build_rc=$rc undefined_refs=$n missing_libs=$m"
+          if [ $rc -eq 0 ]; then ./linux/ccextractor-hardsubx-x86_64.AppImage --version | head -3; fi
+          exit $rc
